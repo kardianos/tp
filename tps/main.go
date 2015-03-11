@@ -5,17 +5,25 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"os"
 	"sync"
 
+	"github.com/BurntSushi/toml"
+	"github.com/dchest/spipe"
 	"github.com/kardianos/service"
 )
+
+const configFileName = "tps.config"
 
 var log service.Logger
 
 type Config struct {
 	LocalPort int
+
+	KeyFile string
+	key     []byte
 }
 
 var config *Config = &Config{
@@ -28,6 +36,12 @@ var (
 
 func main() {
 	flag.Parse()
+
+	hasFile, err := loadConfig()
+	if hasFile == true && err != nil {
+		fmt.Println("failed to read config file %q: %v", configFileName, err)
+		os.Exit(1)
+	}
 
 	sc := &service.Config{
 		Name: "tps",
@@ -63,10 +77,24 @@ type app struct {
 }
 
 func (a *app) Start(s service.Service) error {
-	listen, err := net.Listen("tcp", fmt.Sprintf(":%d", config.LocalPort))
+	var err error
+	var listen net.Listener
+
+	listenOn := fmt.Sprintf(":%d", config.LocalPort)
+
+	if len(config.KeyFile) != 0 {
+		key, err := ioutil.ReadFile(config.KeyFile)
+		if err != nil {
+			return err
+		}
+		listen, err = spipe.Listen(key, "tcp", listenOn)
+	} else {
+		listen, err = net.Listen("tcp", listenOn)
+	}
 	if err != nil {
 		return err
 	}
+	log.Infof("Listening on %q", listenOn)
 	go a.run(listen)
 	return nil
 }
@@ -86,6 +114,9 @@ func (a *app) Stop(s service.Service) error {
 
 func forward(local net.Conn) {
 	defer local.Close()
+
+	log.Info("Accept %v", local.RemoteAddr())
+
 	var err error
 	sizeBytes := make([]byte, 4)
 	_, err = local.Read(sizeBytes)
@@ -123,4 +154,13 @@ func forward(local net.Conn) {
 		remote.Close()
 	}()
 	wg.Wait()
+}
+
+func loadConfig() (hasFile bool, err error) {
+	configBytes, err := ioutil.ReadFile(configFileName)
+	if err != nil {
+		return false, nil
+	}
+	err = toml.Unmarshal(configBytes, &config)
+	return true, err
 }

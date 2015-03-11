@@ -5,19 +5,27 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"os"
 	"sync"
+
+	"github.com/dchest/spipe"
 )
 
 var (
-	remote = flag.String("remote", "", "remote address to dial")
-	local  = flag.Int("local", 5000, "local port to listen to")
-	tcs    = flag.String("tcs", "localhost:30541", "address of the tcs server")
+	remote  = flag.String("remote", "", "remote address to dial")
+	local   = flag.Int("local", 5000, "local port to listen to")
+	tcs     = flag.String("tcs", "localhost:30541", "address of the tcs server")
+	keyFile = flag.String("key", "", "key file to use a secure connection")
 )
 
-var header []byte
+var (
+	header []byte
+	key    []byte
+	secure bool
+)
 
 func main() {
 	flag.Parse()
@@ -25,6 +33,15 @@ func main() {
 	if len(*remote) == 0 || len(*tcs) == 0 {
 		flag.PrintDefaults()
 		os.Exit(1)
+	}
+
+	var err error
+	if len(*keyFile) != 0 {
+		key, err = ioutil.ReadFile(*keyFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		secure = true
 	}
 
 	header = make([]byte, 4+len(*remote))
@@ -47,9 +64,15 @@ func main() {
 }
 func forward(local net.Conn) {
 	defer local.Close()
-	var err error
 
-	remote, err := net.Dial("tcp", *tcs)
+	var err error
+	var remote net.Conn
+
+	if secure {
+		remote, err = spipe.Dial(key, "tcp", *tcs)
+	} else {
+		remote, err = net.Dial("tcp", *tcs)
+	}
 	if err != nil {
 		log.Printf("failed to dial tcs %q: %v", *tcs, err)
 		return
