@@ -19,6 +19,8 @@ var (
 	local   = flag.Int("local", 5000, "local port to listen to")
 	tcs     = flag.String("tcs", "localhost:30541", "address of the tcs server")
 	keyFile = flag.String("key", "", "key file to use a secure connection")
+	dumpOut = flag.String("dump-out", "", "file to dump out-bound traffic to")
+	dumpIn  = flag.String("dump-in", "", "file to dump out-bound traffic to")
 )
 
 var (
@@ -62,11 +64,11 @@ func main() {
 		go forward(conn)
 	}
 }
-func forward(local net.Conn) {
+func forward(local io.ReadWriteCloser) {
 	defer local.Close()
 
 	var err error
-	var remote net.Conn
+	var remote io.ReadWriteCloser
 
 	if secure {
 		remote, err = spipe.Dial(key, "tcp", *tcs)
@@ -85,17 +87,45 @@ func forward(local net.Conn) {
 		return
 	}
 
+	var dumpOutWriter io.WriteCloser
+	if len(*dumpOut) != 0 {
+		dumpOutWriter, err = os.OpenFile(*dumpOut, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0777)
+		if err != nil {
+			log.Printf("failed to open dump out file %q: %v", *dumpOut, err)
+			return
+		}
+		defer dumpOutWriter.Close()
+	}
+
+	var dumpInWriter io.WriteCloser
+	if len(*dumpIn) != 0 {
+		dumpInWriter, err = os.OpenFile(*dumpIn, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0777)
+		if err != nil {
+			log.Printf("failed to open dump in file %q: %v", *dumpIn, err)
+			return
+		}
+		defer dumpInWriter.Close()
+	}
+
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
 
 	go func() {
-		io.Copy(local, remote)
+		if dumpInWriter != nil {
+			io.Copy(local, io.TeeReader(remote, dumpInWriter))
+		} else {
+			io.Copy(local, remote)
+		}
 		wg.Done()
 		local.Close()
 	}()
 
 	go func() {
-		io.Copy(remote, local)
+		if dumpOutWriter != nil {
+			io.Copy(remote, io.TeeReader(local, dumpOutWriter))
+		} else {
+			io.Copy(remote, local)
+		}
 		wg.Done()
 		remote.Close()
 	}()

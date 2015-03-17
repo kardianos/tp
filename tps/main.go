@@ -34,6 +34,13 @@ var (
 	action = flag.String("action", "", "Control the service")
 )
 
+/*
+	RDP Magic: 03 00
+	RDP host name length at byte: 130
+	RDP host name ASCII follows length byte.
+
+*/
+
 func main() {
 	flag.Parse()
 
@@ -61,6 +68,7 @@ func main() {
 	if len(*action) > 0 {
 		err = service.Control(s, *action)
 		if err != nil {
+			fmt.Printf("Control action %q failed: %v\n", *action, err)
 			fmt.Printf("available actions: %q\n", service.ControlAction)
 			flag.PrintDefaults()
 			os.Exit(2)
@@ -83,7 +91,8 @@ func (a *app) Start(s service.Service) error {
 	listenOn := fmt.Sprintf(":%d", config.LocalPort)
 
 	if len(config.KeyFile) != 0 {
-		key, err := ioutil.ReadFile(config.KeyFile)
+		var key []byte
+		key, err = ioutil.ReadFile(config.KeyFile)
 		if err != nil {
 			return err
 		}
