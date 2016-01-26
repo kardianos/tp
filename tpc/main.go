@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/dchest/spipe"
 )
@@ -27,7 +28,16 @@ var (
 	header []byte
 	key    []byte
 	secure bool
+
+	pingHeader = makeHeader("$$PING$$")
 )
+
+func makeHeader(addr string) []byte {
+	h := make([]byte, 4+len(addr))
+	binary.LittleEndian.PutUint32(h, uint32(len(addr)))
+	copy(h[4:], addr)
+	return h
+}
 
 func main() {
 	flag.Parse()
@@ -44,11 +54,14 @@ func main() {
 			log.Fatal(err)
 		}
 		secure = true
+		log.Println("Secure connection")
+	}
+	err = ping()
+	if err != nil {
+		log.Fatalf("Failed to ping remote server: %v", err)
 	}
 
-	header = make([]byte, 4+len(*remote))
-	binary.LittleEndian.PutUint32(header, uint32(len(*remote)))
-	copy(header[4:], *remote)
+	header = makeHeader(*remote)
 
 	listen, err := net.Listen("tcp", fmt.Sprintf(":%d", *local))
 	if err != nil {
@@ -64,6 +77,38 @@ func main() {
 		go forward(conn)
 	}
 }
+
+func ping() error {
+	var err error
+	var remote net.Conn
+
+	if secure {
+		remote, err = spipe.Dial(key, "tcp", *tcs)
+	} else {
+		remote, err = net.Dial("tcp", *tcs)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to dial tcs %q: %v", *tcs, err)
+	}
+	defer remote.Close()
+
+	remote.SetDeadline(time.Now().Add(time.Second * 2))
+
+	log.Println("Sent PING")
+	_, err = remote.Write(pingHeader)
+	if err != nil {
+		return fmt.Errorf("Failed to write header: %v", err)
+	}
+
+	rbuf := make([]byte, 30)
+	n, err := remote.Read(rbuf)
+	if string(rbuf[:n]) != "$$PONG$$" {
+		return fmt.Errorf("Invalid pong, got %q", string(rbuf[:n]))
+	}
+	log.Println("Got PONG")
+	return nil
+}
+
 func forward(local io.ReadWriteCloser) {
 	defer local.Close()
 

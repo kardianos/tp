@@ -8,10 +8,13 @@ import (
 	"io/ioutil"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/dchest/spipe"
+	"github.com/kardianos/osext"
 	"github.com/kardianos/service"
 )
 
@@ -91,6 +94,7 @@ func (a *app) Start(s service.Service) error {
 	listenOn := fmt.Sprintf(":%d", config.LocalPort)
 
 	if len(config.KeyFile) != 0 {
+		log.Info("Secure connection")
 		var key []byte
 		key, err = ioutil.ReadFile(config.KeyFile)
 		if err != nil {
@@ -128,20 +132,32 @@ func forward(local net.Conn) {
 
 	var err error
 	sizeBytes := make([]byte, 4)
+	local.SetReadDeadline(time.Now().Add(time.Second))
 	_, err = local.Read(sizeBytes)
 	if err != nil {
 		log.Warningf("failed to read size: %v", err)
 		return
 	}
 	size := int(binary.LittleEndian.Uint32(sizeBytes))
-	remoteAddr := make([]byte, size)
-	_, err = local.Read(remoteAddr)
+	remoteAddrBuf := make([]byte, size)
+	_, err = local.Read(remoteAddrBuf)
 	if err != nil {
 		log.Warningf("failed to read remote address: %v", err)
 		return
 	}
 
-	remote, err := net.Dial("tcp", string(remoteAddr))
+	local.SetReadDeadline(time.Time{})
+
+	remoteAddr := string(remoteAddrBuf)
+
+	if remoteAddr == "$$PING$$" {
+		log.Info("Got PING")
+		local.Write([]byte("$$PONG$$"))
+		log.Info("Sent PONG")
+		return
+	}
+
+	remote, err := net.Dial("tcp", remoteAddr)
 	if err != nil {
 		log.Warningf("failed to dial %q: %v", remoteAddr, err)
 		return
@@ -166,7 +182,11 @@ func forward(local net.Conn) {
 }
 
 func loadConfig() (hasFile bool, err error) {
-	configBytes, err := ioutil.ReadFile(configFileName)
+	folder, err := osext.ExecutableFolder()
+	if err != nil {
+		return false, err
+	}
+	configBytes, err := ioutil.ReadFile(filepath.Join(folder, configFileName))
 	if err != nil {
 		return false, nil
 	}
