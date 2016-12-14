@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"github.com/dchest/spipe"
 	"github.com/kardianos/osext"
 	"github.com/kardianos/service"
+	"github.com/kardianos/tp/internal"
 )
 
 const configFileName = "tps.config"
@@ -100,7 +100,7 @@ func (a *app) Start(s service.Service) error {
 		if err != nil {
 			return err
 		}
-		listen, err = spipe.Listen(key, "tcp", listenOn)
+		listen, err = internal.Listen(key, "tcp", listenOn, time.Second*30)
 	} else {
 		listen, err = net.Listen("tcp", listenOn)
 	}
@@ -157,7 +157,11 @@ func forward(local net.Conn) {
 		return
 	}
 
-	remote, err := net.Dial("tcp", remoteAddr)
+	dialer := &net.Dialer{
+		KeepAlive: time.Second * 30,
+		Timeout:   time.Second * 10,
+	}
+	remote, err := dialer.Dial("tcp", remoteAddr)
 	if err != nil {
 		log.Warningf("failed to dial %q: %v", remoteAddr, err)
 		return

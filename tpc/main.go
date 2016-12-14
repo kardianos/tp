@@ -83,6 +83,15 @@ func ping() error {
 	var remote net.Conn
 
 	if secure {
+		dialer := &net.Dialer{
+			Timeout:   time.Second * 10,
+			KeepAlive: time.Second * 30,
+		}
+		nc, err := dialer.Dial("tcp", *tcs)
+		if err != nil {
+			return err
+		}
+		remote = spipe.Client(key, nc)
 		remote, err = spipe.Dial(key, "tcp", *tcs)
 	} else {
 		remote, err = net.Dial("tcp", *tcs)
@@ -116,7 +125,14 @@ func forward(local io.ReadWriteCloser) {
 	var remote io.ReadWriteCloser
 
 	if secure {
-		remote, err = spipe.Dial(key, "tcp", *tcs)
+		dialer := &net.Dialer{
+			Timeout:   time.Second * 10,
+			KeepAlive: time.Second * 30,
+		}
+		nc, err := dialer.Dial("tcp", *tcs)
+		if err == nil {
+			remote = spipe.Client(key, nc)
+		}
 	} else {
 		remote, err = net.Dial("tcp", *tcs)
 	}
